@@ -68,6 +68,7 @@ code{background:var(--bg);padding:1px 5px;border-radius:4px;word-break:break-all
 const SHEET_ID = '1HX1XBchu2cVcqgWlBM_5dat9_UAnPmwelTi_FroWO9s';
 const API_KEY  = 'AIzaSyDoz4N54mx1SU7m0TZHsbxlzF5YkgNhA9c';
 const REQUIRE_PIN = true;      // flats without a PIN row in the "Access" tab are blocked
+const EXCLUDE_FROM_TOTAL = ['211', '503'];   // flats left out of the home-page total (still listed, marked)
 const MAX_COLS = 'CZ', MAX_ROWS = 200;
 /* ========================================= */
 
@@ -156,14 +157,18 @@ function home() {
   const ly = state.years[latestYear()];
   const list = flatKeys().map(f => ({ f, due: ly.flats[f] ? ly.flats[f].due : 0 }));
   const pending = list.filter(x => x.due > 0).sort((a, b) => b.due - a.due);
-  const total = pending.reduce((s, x) => s + x.due, 0);
+  const skipped = pending.filter(x => EXCLUDE_FROM_TOTAL.includes(x.f));
+  const counted = pending.filter(x => !EXCLUDE_FROM_TOTAL.includes(x.f));
+  const total = counted.reduce((s, x) => s + x.due, 0);
+  const skipTotal = skipped.reduce((s, x) => s + x.due, 0);
   const cleared = list.length - pending.length;
   app.innerHTML = `
-    <div class="card"><div class="mute">Total pending, ${pending.length} flats</div><div class="total">${inr(total)}</div></div>
+    <div class="card"><div class="mute">Total pending, ${counted.length} flats</div><div class="total">${inr(total)}</div>
+      ${skipped.length ? `<div class="mute">Excludes flat ${skipped.map(x => esc(x.f)).join(', ')} (${inr(skipTotal)})</div>` : ''}</div>
     <div class="card"><label for="pick" class="mute">View your flat's month-wise report</label>
       <select id="pick"><option value="">Select flat number</option>${flatKeys().map(f => `<option>${esc(f)}</option>`).join('')}</select></div>
     <div class="card"><b>Flats with pending maintenance</b>
-      <div class="grid" style="margin-top:10px">${pending.map(x => `<button class="chip" data-f="${esc(x.f)}"><b>${/^\d+$/.test(x.f) ? 'Flat ' : ''}${esc(x.f)}</b><span>${inr(x.due)}</span></button>`).join('')}</div>
+      <div class="grid" style="margin-top:10px">${counted.map(x => `<button class="chip" data-f="${esc(x.f)}"><b>${/^\d+$/.test(x.f) ? 'Flat ' : ''}${esc(x.f)}</b><span>${inr(x.due)}</span></button>`).join('')}</div>
       <p class="mute">${cleared} flats are fully paid or in advance.</p></div>`;
   $('pick').onchange = e => e.target.value && (location.hash = 'flat=' + encodeURIComponent(e.target.value));
   app.querySelectorAll('.chip').forEach(b => b.onclick = () => location.hash = 'flat=' + encodeURIComponent(b.dataset.f));
