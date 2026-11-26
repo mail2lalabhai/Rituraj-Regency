@@ -42,6 +42,10 @@ td.c{text-align:left;white-space:normal;color:var(--mute);font-size:.85rem}
 code{background:var(--bg);padding:1px 5px;border-radius:4px;word-break:break-all}
 #pin{min-width:0;font-family:system-ui,Arial,sans-serif;font-size:1.2rem;letter-spacing:.15em;color:#14292a;-webkit-text-fill-color:#14292a;background:#fff}
 @media (prefers-color-scheme:dark){#pin{color:#e6f0ee;-webkit-text-fill-color:#e6f0ee;background:#152626}}
+.nav{display:flex;gap:8px;margin-bottom:12px}
+.nav a{padding:6px 18px;border:1px solid var(--line);border-radius:20px;text-decoration:none;background:var(--card)}
+.nav a[aria-current=page]{background:var(--brand);color:var(--bg);border-color:var(--brand)}
+.tag{font-size:.7rem;border:1px solid var(--warn);color:var(--warn);border-radius:10px;padding:0 6px;margin-left:6px}
 .pr{display:none}
 @media print{
   :root{--bg:#fff;--card:#fff;--ink:#000;--mute:#444;--line:#999;--brand:#000;--due:#000;--ok:#000;--warn:#000}
@@ -53,7 +57,7 @@ code{background:var(--bg);padding:1px 5px;border-radius:4px;word-break:break-all
   .scroll{overflow:visible}
   table{min-width:0}
   th,td{padding:4px 6px;white-space:normal}
-  .yr{break-inside:avoid;margin-bottom:16px}
+  .yr,.mo{break-inside:avoid;margin-bottom:16px}
   .total{font-size:1.4rem}
 }
 </style>
@@ -61,6 +65,7 @@ code{background:var(--bg);padding:1px 5px;border-radius:4px;word-break:break-all
 <body>
 <div class="wrap">
 <header><h1>Rituraj Regency · Maintenance</h1><span class="mute" id="stamp"></span></header>
+<nav class="noprint nav"><a href="#" id="n1">Maintenance</a><a href="#expenses" id="n2">Expenses</a></nav>
 <main id="app"><div class="card">Loading…</div></main>
 </div>
 <script>
@@ -70,6 +75,19 @@ const API_KEY  = 'AIzaSyDoz4N54mx1SU7m0TZHsbxlzF5YkgNhA9c';
 const REQUIRE_PIN = true;      // flats without a PIN row in the "Access" tab are blocked
 const EXCLUDE_FROM_TOTAL = ['211', '503'];   // flats left out of the home-page total and list (reports still open from the dropdown)
 const MAX_COLS = 'CZ', MAX_ROWS = 200;
+/* Expenses tab: items whose text contains any of these words get a "special" tag (still counted in totals) */
+const EXP_SPECIAL = ['tank 2','tanki','tank cover','tenk cover','tenk repair','lift drive','lift painting','nagar nigam','boring','old tank'];
+/* Category summary: first matching pattern wins; unmatched items go to "Other" */
+const EXP_CATS = [
+  ['Water tanker', /tenk[ae]r|tanker/i],
+  ['Guard salary', /guard|gaurd/i],
+  ['Electricity', /elec|bijli|mpbeb|light|bulb|charging/i],
+  ['Garbage (kachra)', /kachra|kachara|nagar nigam/i],
+  ['Lift', /lift/i],
+  ['Water tank & plumbing', /tank|tenk|plumb|boring|pipe|moter|motor|water bell|dvc/i],
+  ['Cleaning', /clean|safai|chamber|duct|jhadu|pocha|finayel|acid/i],
+  ['Repairs & other works', /repair|work/i]
+];
 /* ========================================= */
 
 const API = 'https://sheets.googleapis.com/v4/spreadsheets/' + SHEET_ID;
@@ -84,7 +102,7 @@ const norm = v => String(v ?? '').toLowerCase().replace(/[\s.]/g, '');
 const sha = async s => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)))].map(b => b.toString(16).padStart(2, '0')).join('');
 const hashPin = (flat, pin) => sha('rr|' + flat + '|' + pin);
 
-const state = { years: {}, access: {}, accessOk: false, sel: null };
+const state = { years: {}, access: {}, accessOk: false, sel: null, exp: {}, expSel: null };
 
 async function api(path) {
   const r = await fetch(API + path + (path.includes('?') ? '&' : '?') + 'key=' + API_KEY);
@@ -130,16 +148,60 @@ function parseYear(title, rows) {
   return { year: +title, flats };
 }
 
+/*EXP-PARSE-START*/
+/* Expences_<year>: month blocks side by side (Sr No, Paid By, Paid to/for, Amount, Comments); Paid By is never read. */
+function parseExp(title, rows) {
+  const FULL = MONFULL.map(m => m.toLowerCase());
+  const mr = rows.findIndex(r => r.filter(v => FULL.includes(norm(v))).length >= 3);
+  if (mr < 0) return parseExp2024(title, rows);
+  const hdr = rows[mr], sub = rows[mr + 1] || [], starts = [], months = {};
+  hdr.forEach((v, c) => { const m = FULL.indexOf(norm(v)); if (m >= 0) starts.push({ c, m }); });
+  starts.forEach((s, i) => {
+    const end = i + 1 < starts.length ? starts[i + 1].c : Math.max(hdr.length, sub.length) + 1;
+    let it, am, cm;
+    for (let c = s.c; c < end; c++) { const l = norm(sub[c]); if (l === 'paidto/for') it = c; else if (l === 'amount') am = c; else if (l === 'comments') cm = c; }
+    if (it === undefined || am === undefined) return;
+    const items = []; let sheetTotal = null;
+    for (const r of rows.slice(mr + 2)) {
+      if (norm(r[s.c]) === 'total') { sheetTotal = num(r[am]); break; }
+      const name = String(r[it] ?? '').trim(), amt = num(r[am]);
+      if (name && amt) items.push({ name, amt, comment: cm !== undefined ? String(r[cm] ?? '').trim() : '' });
+    }
+    months[s.m] = { items, sheetTotal };
+  });
+  return { year: +String(title).match(/20\d\d/)[0], months };
+}
+/* Old vertical layout (Expences_2024): "Aug-24" label, then Paid to / Amount rows until Total */
+function parseExp2024(title, rows) {
+  const months = {}; let cur = null;
+  for (const r of rows) {
+    let tag = r[5];
+    if (typeof tag === 'number' && tag > 40000) { tag = new Date(Math.round((tag - 25569) * 864e5)); tag = MON[tag.getUTCMonth()] + '-' + String(tag.getUTCFullYear()).slice(2); }
+    tag = String(tag ?? '').trim();
+    const mm = tag.match(/^([A-Za-z]{3})-(\d{2})$/);
+    if (mm) { const m = MON.indexOf(mm[1].toLowerCase()); cur = m >= 0 ? (months[m] = { items: [], sheetTotal: null }) : null; continue; }
+    if (!cur) continue;
+    const l = norm(tag);
+    if (!l || l === 'paidto') continue;
+    if (l === 'total') { cur.sheetTotal = num(r[6]); cur = null; continue; }
+    const amt = num(r[6]);
+    if (amt) cur.items.push({ name: tag, amt, comment: '' });
+  }
+  return { year: +String(title).match(/20\d\d/)[0], months };
+}
+/*EXP-PARSE-END*/
+
 async function load() {
   const meta = await api('?fields=sheets.properties.title');
   const titles = meta.sheets.map(s => s.properties.title);
   const yrs = titles.filter(t => /^20\d\d$/.test(t)).sort();
-  const want = yrs.concat(titles.includes('Access') ? ['Access'] : []);
+  const want = yrs.concat(titles.filter(t => /^expen[cs]es_20\d\d$/i.test(t)), titles.includes('Access') ? ['Access'] : []);
   const q = want.map(t => 'ranges=' + encodeURIComponent("'" + t + "'!A1:" + MAX_COLS + MAX_ROWS)).join('&');
   const data = await api('/values:batchGet?valueRenderOption=UNFORMATTED_VALUE&' + q);
   data.valueRanges.forEach((vr, i) => {
     const t = want[i], rows = vr.values || [];
     if (t === 'Access') { state.accessOk = true; rows.forEach(r => { if (r[0] !== undefined && r[1]) state.access[String(r[0]).trim()] = String(r[1]).trim().toLowerCase(); }); }
+    else if (/^expen/i.test(t)) { const e = parseExp(t, rows); if (e) state.exp[e.year] = e; }
     else { const y = parseYear(t, rows); if (y) state.years[y.year] = y; }
   });
   $('stamp').textContent = 'Loaded ' + new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
@@ -172,17 +234,18 @@ function home() {
 }
 
 /* ---------- PIN gate ---------- */
-function gate(flat) {
+function gate(flat, ok) {
+  ok = ok || (() => report(flat));
   const key = 'rr_ok_' + flat, stored = state.access[flat];
-  if (sessionStorage.getItem(key) === stored && stored) return report(flat);
-  app.innerHTML = `<p><a href="#">← All flats</a></p><div class="card"><b>Flat ${esc(flat)}</b>
+  if (sessionStorage.getItem(key) === stored && stored) return ok();
+  app.innerHTML = `<p><a href="#">← All flats</a></p><div class="card"><b>${flat === 'EXPENSES' ? 'Expenses' : 'Flat ' + esc(flat)}</b>
     <p class="mute">Enter the PIN the committee gave you.</p>
     <div class="row"><input id="pin" type="password" inputmode="numeric" maxlength="12" autocomplete="off" aria-label="PIN"><button id="go">Open</button></div>
     <label class="mute" style="display:block;margin-top:8px"><input type="checkbox" id="sp" style="display:inline;vertical-align:middle"> Show PIN</label>
     <p id="msg" class="err"></p></div>`;
   if (REQUIRE_PIN && !stored) { $('msg').textContent = 'No PIN is set for this flat yet. Please ask the committee.'; return; }
   const submit = async () => {
-    if ((await hashPin(flat, $('pin').value.trim())) === stored) { sessionStorage.setItem(key, stored); report(flat); }
+    if ((await hashPin(flat, $('pin').value.trim())) === stored) { sessionStorage.setItem(key, stored); ok(); }
     else $('msg').textContent = 'That PIN is not correct.';
   };
   $('go').onclick = submit; $('pin').onkeydown = e => { if (e.key === 'Enter') submit(); };
@@ -230,6 +293,50 @@ function report(flat) {
   $('prt').onclick = () => window.print();
 }
 
+/* ---------- Expenses: month-wise, year by year ---------- */
+function expView() {
+  const ys = Object.keys(state.exp).map(Number).filter(y => Object.values(state.exp[y].months).some(m => m.items.length)).sort();
+  if (!ys.length) { app.innerHTML = '<div class="card">No expense records found.</div>'; return; }
+  if (!state.expSel) state.expSel = new Set([ys[ys.length - 1]]);
+  const sel = state.expSel, chosen = ys.filter(y => sel.has(y));
+  const fm = v => (v < 0 ? '−' + inr(v) + ' Cr' : inr(v));
+  const special = n => EXP_SPECIAL.some(w => n.toLowerCase().includes(w));
+  const catOf = n => (EXP_CATS.find(([, re]) => re.test(n)) || ['Other'])[0];
+  let grand = 0;
+  const secs = chosen.map(y => {
+    const mo = state.exp[y].months;
+    const idx = Object.keys(mo).map(Number).filter(m => mo[m].items.length).sort((a, b) => a - b);
+    let yt = 0; const cats = {}, blocks = [];
+    for (let m = idx[0]; m <= idx[idx.length - 1]; m++) {
+      const d = mo[m];
+      if (!d || !d.items.length) { blocks.push(`<section class="mo card"><h2>${MONFULL[m]} ${y}</h2><p class="mute">No expenses entered yet.</p></section>`); continue; }
+      const t = d.items.reduce((s, x) => s + x.amt, 0); yt += t;
+      d.items.forEach(x => { const c = catOf(x.name); cats[c] = (cats[c] || 0) + x.amt; });
+      const bad = d.sheetTotal !== null && Math.abs(d.sheetTotal - t) > 0.5;
+      blocks.push(`<section class="mo card scroll"><h2>${MONFULL[m]} ${y}</h2><table><thead><tr><th>Item</th><th>Note</th><th>Amount</th></tr></thead><tbody>
+        ${d.items.map(x => `<tr><td>${esc(x.name)}${special(x.name) ? '<span class="tag">special</span>' : ''}</td><td class="c">${esc(x.comment)}</td><td>${fm(x.amt)}</td></tr>`).join('')}
+        <tr><th>Month total</th><th></th><th>${fm(t)}${bad ? ` <span class="flag" title="The sheet's own total for this month is ${inr(d.sheetTotal)}; the items add up to ${inr(t)}.">⚠</span>` : ''}</th></tr></tbody></table></section>`);
+    }
+    grand += yt;
+    const catRows = Object.entries(cats).sort((a, b) => b[1] - a[1]);
+    return `<h2 style="margin-top:18px">${y}</h2>
+      <section class="mo card scroll"><b>${y} by category</b><table><thead><tr><th>Category</th><th>Amount</th></tr></thead><tbody>
+        ${catRows.map(([c, v]) => `<tr><td>${esc(c)}</td><td>${fm(v)}</td></tr>`).join('')}
+        <tr><th>Year total</th><th>${fm(yt)}</th></tr></tbody></table></section>${blocks.join('')}`;
+  }).join('');
+  app.innerHTML = `<div class="pr"><h1>Rituraj Regency – Expenses Statement</h1><div>Years: ${chosen.join(', ') || 'none'} · Printed ${new Date().toLocaleDateString('en-IN')}</div></div>
+    <div class="card noprint"><b>Select years to view or print</b>
+      <div class="tabs" role="group" aria-label="Years">${ys.map(y => `<label class="yb"><input type="checkbox" data-y="${y}" ${sel.has(y) ? 'checked' : ''}> ${y}</label>`).join('')}
+        <button class="btn" id="eall">${chosen.length === ys.length ? 'Clear all' : 'Select all'}</button>
+        <button class="btn main" id="eprt" ${chosen.length ? '' : 'disabled'}>Print / Save PDF</button></div></div>
+    ${secs || '<div class="card mute">Select at least one year.</div>'}
+    ${chosen.length > 1 ? `<div class="card"><b>Total for selected years: ${fm(grand)}</b></div>` : ''}
+    <p class="mute">Cr = credit (money back, reduces the total). "special" marks one-off items that are still included in the totals. ⚠ means the items do not add up to the total written in the sheet.</p>`;
+  app.querySelectorAll('.yb input').forEach(cb => cb.onchange = () => { cb.checked ? sel.add(+cb.dataset.y) : sel.delete(+cb.dataset.y); expView(); });
+  $('eall').onclick = () => { chosen.length === ys.length ? sel.clear() : ys.forEach(y => sel.add(y)); expView(); };
+  $('eprt').onclick = () => window.print();
+}
+
 /* ---------- Committee tool: #admin generates a PIN hash row for the "Access" tab ---------- */
 function admin() {
   app.innerHTML = `<p><a href="#">← Back</a></p><div class="card"><b>Committee: create PIN entry</b>
@@ -240,6 +347,9 @@ function admin() {
 }
 
 function route() {
+  const ex = location.hash === '#expenses';
+  $('n1').setAttribute('aria-current', ex ? 'false' : 'page'); $('n2').setAttribute('aria-current', ex ? 'page' : 'false');
+  if (ex) return gate('EXPENSES', expView);
   if (location.hash === '#admin') return admin();
   const m = location.hash.match(/^#flat=(.+)$/);
   m ? gate(decodeURIComponent(m[1])) : home();
