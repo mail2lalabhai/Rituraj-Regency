@@ -14,19 +14,22 @@ body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 'Atkinson Hype
 .wrap{max-width:760px;margin:0 auto;padding:16px}
 header{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:12px}
 h1{font-size:1.25rem;margin:0;color:var(--brand)}
+h2{font-size:1.05rem;margin:0 0 8px;color:var(--brand)}
 a,button{color:var(--brand)}
 button,select,input{font:inherit;color:inherit}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:12px}
 .total{font-size:2rem;font-weight:700;color:var(--due);line-height:1.1}
 .mute{color:var(--mute);font-size:.875rem}
 select,input{width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--card)}
+input[type=checkbox]{width:auto;padding:0;accent-color:var(--brand)}
 :focus-visible{outline:3px solid var(--brand);outline-offset:2px}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:8px}
 .chip{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:8px;text-align:left;cursor:pointer}
 .chip b{display:block}.chip span{color:var(--due);font-weight:700}
-.tabs{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
-.tabs button{border:1px solid var(--line);background:none;border-radius:20px;padding:4px 14px;cursor:pointer}
-.tabs button[aria-pressed=true]{background:var(--brand);color:var(--bg);border-color:var(--brand)}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0}
+.yb{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:20px;padding:4px 14px;cursor:pointer}
+.btn{border:1px solid var(--brand);background:none;border-radius:8px;padding:6px 14px;cursor:pointer}
+.btn.main{background:var(--brand);color:var(--bg)}
 .scroll{overflow-x:auto}
 table{border-collapse:collapse;width:100%;min-width:560px;font-variant-numeric:tabular-nums}
 th,td{padding:7px 8px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
@@ -39,6 +42,20 @@ td.c{text-align:left;white-space:normal;color:var(--mute);font-size:.85rem}
 code{background:var(--bg);padding:1px 5px;border-radius:4px;word-break:break-all}
 #pin{min-width:0;font-family:system-ui,Arial,sans-serif;font-size:1.2rem;letter-spacing:.15em;color:#14292a;-webkit-text-fill-color:#14292a;background:#fff}
 @media (prefers-color-scheme:dark){#pin{color:#e6f0ee;-webkit-text-fill-color:#e6f0ee;background:#152626}}
+.pr{display:none}
+@media print{
+  :root{--bg:#fff;--card:#fff;--ink:#000;--mute:#444;--line:#999;--brand:#000;--due:#000;--ok:#000;--warn:#000}
+  body{background:#fff;color:#000;font-size:12px}
+  .noprint,header{display:none!important}
+  .pr{display:block;margin-bottom:10px}
+  .wrap{max-width:none;padding:0}
+  .card{border:0;padding:0}
+  .scroll{overflow:visible}
+  table{min-width:0}
+  th,td{padding:4px 6px;white-space:normal}
+  .yr{break-inside:avoid;margin-bottom:16px}
+  .total{font-size:1.4rem}
+}
 </style>
 </head>
 <body>
@@ -47,7 +64,7 @@ code{background:var(--bg);padding:1px 5px;border-radius:4px;word-break:break-all
 <main id="app"><div class="card">Loading…</div></main>
 </div>
 <script>
-/* ===== CONFIG – edit these two lines ===== */
+/* ===== CONFIG – edit these lines ===== */
 const SHEET_ID = '1HX1XBchu2cVcqgWlBM_5dat9_UAnPmwelTi_FroWO9s';
 const API_KEY  = 'AIzaSyDoz4N54mx1SU7m0TZHsbxlzF5YkgNhA9c';
 const REQUIRE_PIN = true;      // flats without a PIN row in the "Access" tab are blocked
@@ -66,7 +83,7 @@ const norm = v => String(v ?? '').toLowerCase().replace(/[\s.]/g, '');
 const sha = async s => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)))].map(b => b.toString(16).padStart(2, '0')).join('');
 const hashPin = (flat, pin) => sha('rr|' + flat + '|' + pin);
 
-const state = { years: {}, access: {}, accessOk: false };
+const state = { years: {}, access: {}, accessOk: false, sel: null };
 
 async function api(path) {
   const r = await fetch(API + path + (path.includes('?') ? '&' : '?') + 'key=' + API_KEY);
@@ -152,14 +169,14 @@ function home() {
   app.querySelectorAll('.chip').forEach(b => b.onclick = () => location.hash = 'flat=' + encodeURIComponent(b.dataset.f));
 }
 
-/* ---------- PIN gate + flat report ---------- */
+/* ---------- PIN gate ---------- */
 function gate(flat) {
   const key = 'rr_ok_' + flat, stored = state.access[flat];
   if (sessionStorage.getItem(key) === stored && stored) return report(flat);
   app.innerHTML = `<p><a href="#">← All flats</a></p><div class="card"><b>Flat ${esc(flat)}</b>
     <p class="mute">Enter the PIN the committee gave you.</p>
     <div class="row"><input id="pin" type="password" inputmode="numeric" maxlength="12" autocomplete="off" aria-label="PIN"><button id="go">Open</button></div>
-    <label class="mute" style="display:block;margin-top:8px"><input type="checkbox" id="sp" style="width:auto;display:inline;vertical-align:middle"> Show PIN</label>
+    <label class="mute" style="display:block;margin-top:8px"><input type="checkbox" id="sp" style="display:inline;vertical-align:middle"> Show PIN</label>
     <p id="msg" class="err"></p></div>`;
   if (REQUIRE_PIN && !stored) { $('msg').textContent = 'No PIN is set for this flat yet. Please ask the committee.'; return; }
   const submit = async () => {
@@ -167,31 +184,48 @@ function gate(flat) {
     else $('msg').textContent = 'That PIN is not correct.';
   };
   $('go').onclick = submit; $('pin').onkeydown = e => { if (e.key === 'Enter') submit(); };
-  $('sp').onchange = e => $('pin').type = e.target.checked ? 'text' : 'password';
+  $('sp').onchange = e => { $('pin').type = e.target.checked ? 'text' : 'password'; };
   $('pin').focus();
 }
 
-function report(flat, year) {
+/* ---------- Flat report: pick years with checkboxes, then print ---------- */
+function report(flat) {
   const ys = Object.keys(state.years).map(Number).filter(y => state.years[y].flats[flat]).sort();
   if (!ys.length) { app.innerHTML = '<p><a href="#">← All flats</a></p><div class="card">No records for this flat.</div>'; return; }
-  year = ys.includes(year) ? year : ys[ys.length - 1];
-  const f = state.years[year].flats[flat], latest = state.years[latestYear()].flats[flat];
-  const due = latest ? latest.due : f.due;
-  const rows = f.months.filter(x => x.billed || x.rec || x.tank || x.comment);
-  const tR = rows.reduce((s, x) => s + x.rec + x.tank, 0), tB = rows.reduce((s, x) => s + x.billed, 0);
-  app.innerHTML = `<p><a href="#">← All flats</a></p>
-    <div class="card"><div class="mute">Flat ${esc(flat)}${f.name ? ' · ' + esc(f.name) : ''}</div>
-      <div class="mute">Pending now</div>
-      <div class="total ${due > 0 ? '' : 'ok'}">${due > 0 ? inr(due) : due < 0 ? inr(due) + ' advance' : 'Nil'}</div></div>
-    <div class="tabs" role="group" aria-label="Year">${ys.map(y => `<button aria-pressed="${y === year}" data-y="${y}">${y}</button>`).join('')}</div>
-    <div class="card scroll">${rows.length ? `<table><thead><tr><th>Month</th><th>Old due</th><th>Billed</th><th>Paid</th><th>Pending</th><th>Note</th></tr></thead><tbody>
-      ${rows.map(x => `<tr><td>${MONFULL[x.m].slice(0, 3)} ${year}</td><td>${inr(x.old)}${x.old < 0 ? ' Cr' : ''}</td><td>${inr(x.billed)}</td>
+  if (!state.sel || state.sel.flat !== flat) state.sel = { flat, years: new Set([ys[ys.length - 1]]) };
+  const sel = state.sel.years, chosen = ys.filter(y => sel.has(y));
+  const top = state.years[ys[ys.length - 1]].flats[flat];
+  const latest = state.years[latestYear()].flats[flat];
+  const due = latest ? latest.due : top.due;
+  let gB = 0, gP = 0;
+  const sections = chosen.map(y => {
+    const f = state.years[y].flats[flat];
+    const rows = f.months.filter(x => x.billed || x.rec || x.tank || x.comment);
+    const tR = rows.reduce((s, x) => s + x.rec + x.tank, 0), tB = rows.reduce((s, x) => s + x.billed, 0);
+    gB += tB; gP += tR;
+    return `<section class="yr card scroll"><h2>${y}${f.name ? ' · ' + esc(f.name) : ''}</h2>${rows.length ? `<table><thead><tr><th>Month</th><th>Old due</th><th>Billed</th><th>Paid</th><th>Pending</th><th>Note</th></tr></thead><tbody>
+      ${rows.map(x => `<tr><td>${MONFULL[x.m].slice(0, 3)} ${y}</td><td>${inr(x.old)}${x.old < 0 ? ' Cr' : ''}</td><td>${inr(x.billed)}</td>
         <td>${inr(x.rec + x.tank)}</td><td class="${x.bal > 0 ? 'due' : 'ok'}">${x.bal < 0 ? inr(x.bal) + ' Cr' : inr(x.bal)}${x.mismatch !== undefined ? ` <span class="flag" title="Previous month closed at ${inr(x.mismatch)}, but this month opens differently.">⚠</span>` : ''}</td>
         <td class="c">${x.tank ? 'Incl. special tank levy. ' : ''}${esc(x.comment)}</td></tr>`).join('')}
-      <tr><th>Year</th><th></th><th>${inr(tB)}</th><th>${inr(tR)}</th><th></th><th></th></tr></tbody></table>`
-      : '<p class="mute">No bills or payments recorded for this year yet.</p>'}</div>
+      <tr><th>Year total</th><th></th><th>${inr(tB)}</th><th>${inr(tR)}</th><th></th><th></th></tr></tbody></table>`
+      : '<p class="mute">No bills or payments recorded for this year yet.</p>'}</section>`;
+  }).join('');
+  app.innerHTML = `<p class="noprint"><a href="#">← All flats</a></p>
+    <div class="pr"><h1>Rituraj Regency – Maintenance Statement</h1>
+      <div>Flat ${esc(flat)}${top.name ? ' · ' + esc(top.name) : ''} · Years: ${chosen.join(', ') || 'none'} · Printed ${new Date().toLocaleDateString('en-IN')}</div></div>
+    <div class="card"><div class="mute noprint">Flat ${esc(flat)}${top.name ? ' · ' + esc(top.name) : ''}</div>
+      <div class="mute">Pending now</div>
+      <div class="total ${due > 0 ? '' : 'ok'}">${due > 0 ? inr(due) : due < 0 ? inr(due) + ' advance' : 'Nil'}</div></div>
+    <div class="card noprint"><b>Select years to view or print</b>
+      <div class="tabs" role="group" aria-label="Years">${ys.map(y => `<label class="yb"><input type="checkbox" data-y="${y}" ${sel.has(y) ? 'checked' : ''}> ${y}</label>`).join('')}
+        <button class="btn" id="all">${chosen.length === ys.length ? 'Clear all' : 'Select all'}</button>
+        <button class="btn main" id="prt" ${chosen.length ? '' : 'disabled'}>Print / Save PDF</button></div></div>
+    ${sections || '<div class="card mute">Select at least one year.</div>'}
+    ${chosen.length > 1 ? `<div class="card"><b>Selected years: billed ${inr(gB)} · paid ${inr(gP)}</b></div>` : ''}
     <p class="mute">Cr = credit (paid in advance). ⚠ means the opening balance does not match the previous month's closing balance; ask the committee to check.</p>`;
-  app.querySelectorAll('.tabs button').forEach(b => b.onclick = () => report(flat, +b.dataset.y));
+  app.querySelectorAll('.yb input').forEach(cb => cb.onchange = () => { cb.checked ? sel.add(+cb.dataset.y) : sel.delete(+cb.dataset.y); report(flat); });
+  $('all').onclick = () => { chosen.length === ys.length ? sel.clear() : ys.forEach(y => sel.add(y)); report(flat); };
+  $('prt').onclick = () => window.print();
 }
 
 /* ---------- Committee tool: #admin generates a PIN hash row for the "Access" tab ---------- */
