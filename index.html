@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rituraj Regency – Maintenance</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#eef3f2;--card:#fff;--ink:#14292a;--mute:#5d7270;--line:#d3dedc;--brand:#0f4c4a;--due:#b3402a;--ok:#1f7a4d;--warn:#9a6b00}
+@media (prefers-color-scheme:dark){:root{--bg:#0e1a1a;--card:#152626;--ink:#e6f0ee;--mute:#92aba8;--line:#274040;--brand:#5fc4bb;--due:#ff8d73;--ok:#6fd6a0;--warn:#e8b64a}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 'Atkinson Hyperlegible',system-ui,sans-serif}
+.wrap{max-width:760px;margin:0 auto;padding:16px}
+header{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:12px}
+h1{font-size:1.25rem;margin:0;color:var(--brand)}
+a,button{color:var(--brand)}
+button,select,input{font:inherit;color:inherit}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:12px}
+.total{font-size:2rem;font-weight:700;color:var(--due);line-height:1.1}
+.mute{color:var(--mute);font-size:.875rem}
+select,input{width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--card)}
+:focus-visible{outline:3px solid var(--brand);outline-offset:2px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:8px}
+.chip{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:8px;text-align:left;cursor:pointer}
+.chip b{display:block}.chip span{color:var(--due);font-weight:700}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
+.tabs button{border:1px solid var(--line);background:none;border-radius:20px;padding:4px 14px;cursor:pointer}
+.tabs button[aria-pressed=true]{background:var(--brand);color:var(--bg);border-color:var(--brand)}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:560px;font-variant-numeric:tabular-nums}
+th,td{padding:7px 8px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+td.c{text-align:left;white-space:normal;color:var(--mute);font-size:.85rem}
+.due{color:var(--due);font-weight:700}.ok{color:var(--ok);font-weight:700}
+.flag{color:var(--warn);cursor:help}
+.err{color:var(--due)}.hide{display:none}
+.row{display:flex;gap:8px}.row>*{flex:1}.row>button{flex:0 0 auto;padding:10px 16px}
+code{background:var(--bg);padding:1px 5px;border-radius:4px;word-break:break-all}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header><h1>Rituraj Regency · Maintenance</h1><span class="mute" id="stamp"></span></header>
+<main id="app"><div class="card">Loading…</div></main>
+</div>
+<script>
+/* ===== CONFIG – edit these two lines ===== */
+const SHEET_ID = 'PASTE_GOOGLE_SHEET_ID';
+const API_KEY  = 'PASTE_API_KEY_RESTRICTED_TO_SHEETS_API_AND_YOUR_GITHUB_PAGES_URL';
+const REQUIRE_PIN = true;      // flats without a PIN row in the "Access" tab are blocked
+const MAX_COLS = 'CZ', MAX_ROWS = 200;
+/* ========================================= */
+
+const API = 'https://sheets.googleapis.com/v4/spreadsheets/' + SHEET_ID;
+const MON = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+const MONFULL = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const $ = id => document.getElementById(id);
+const app = $('app');
+const inr = n => '₹' + Math.abs(Math.round(n)).toLocaleString('en-IN');
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const num = v => { if (typeof v === 'number') return v; const n = parseFloat(String(v ?? '').replace(/[₹,\s]/g, '')); return isNaN(n) ? 0 : n; };
+const norm = v => String(v ?? '').toLowerCase().replace(/[\s.]/g, '');
+const sha = async s => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)))].map(b => b.toString(16).padStart(2, '0')).join('');
+const hashPin = (flat, pin) => sha('rr|' + flat + '|' + pin);
+
+const state = { years: {}, access: {}, accessOk: false };
+
+async function api(path) {
+  const r = await fetch(API + path + (path.includes('?') ? '&' : '?') + 'key=' + API_KEY);
+  if (!r.ok) throw new Error('Google Sheets returned ' + r.status + '. Check the sheet ID, API key and that the sheet is shared as "Anyone with the link – Viewer".');
+  return r.json();
+}
+
+/* Parse one year sheet by reading its header labels, not fixed column numbers. */
+function parseYear(title, rows) {
+  const h = rows.findIndex(r => norm(r[1]) === 'name');
+  if (h < 0) return null;
+  const hdr = rows[h], grp = rows[h + 1] || [], sub = rows[h + 2] || [];
+  const starts = [];
+  hdr.forEach((v, c) => { const m = MON.indexOf(norm(v).slice(0, 3)); if (m >= 0 && /^[a-z]+$/.test(norm(v))) starts.push({ c, m }); });
+  const dueCol = hdr.findIndex(v => norm(v) === 'totaldue');
+  const blocks = [];
+  starts.forEach((s, i) => {
+    if (/water/i.test(grp[s.c] || '')) return;           // water blocks are empty in the sheet; skipped
+    const end = i + 1 < starts.length ? starts[i + 1].c : (dueCol > 0 ? dueCol : sub.length + 4);
+    const b = { m: s.m };
+    for (let c = s.c; c < end; c++) {
+      const l = norm(sub[c]), g = norm(grp[c]);
+      if (l === 'olddue') b.old = c; else if (l === 'old+current') b.oc = c;
+      else if (l === 'received') b.rec = c; else if (l === 'tenk') b.tank = c;
+      if (g === 'comments') b.com = c;
+    }
+    if (b.oc !== undefined && b.rec !== undefined) blocks.push(b);
+  });
+  const flats = {};
+  for (const r of rows.slice(h + 3)) {
+    const flat = String(r[2] ?? '').trim();
+    if (norm(r[1]) === 'total') break;
+    if (!flat) continue;
+    const months = blocks.map(b => {
+      const old = num(r[b.old]), oc = num(r[b.oc]);
+      const rec = num(r[b.rec]), tank = b.tank !== undefined ? num(r[b.tank]) : 0;
+      return { m: b.m, old, billed: oc - old, rec, tank, bal: oc - rec - tank, comment: String(r[b.com] ?? '').trim() };
+    });
+    months.forEach((x, i) => { const n = months[i + 1]; if (n && Math.abs(n.old - x.bal) > 0.5) n.mismatch = x.bal; });
+    const last = [...months].reverse().find(x => x.billed || x.rec || x.tank);
+    flats[flat] = { name: String(r[1] ?? '').trim(), months, due: dueCol > 0 && r[dueCol] !== undefined ? num(r[dueCol]) : (last ? last.bal : 0) };
+  }
+  return { year: +title, flats };
+}
+
+async function load() {
+  const meta = await api('?fields=sheets.properties.title');
+  const titles = meta.sheets.map(s => s.properties.title);
+  const yrs = titles.filter(t => /^20\d\d$/.test(t)).sort();
+  const want = yrs.concat(titles.includes('Access') ? ['Access'] : []);
+  const q = want.map(t => 'ranges=' + encodeURIComponent("'" + t + "'!A1:" + MAX_COLS + MAX_ROWS)).join('&');
+  const data = await api('/values:batchGet?valueRenderOption=UNFORMATTED_VALUE&' + q);
+  data.valueRanges.forEach((vr, i) => {
+    const t = want[i], rows = vr.values || [];
+    if (t === 'Access') { state.accessOk = true; rows.forEach(r => { if (r[0] !== undefined && r[1]) state.access[String(r[0]).trim()] = String(r[1]).trim().toLowerCase(); }); }
+    else { const y = parseYear(t, rows); if (y) state.years[y.year] = y; }
+  });
+  $('stamp').textContent = 'Loaded ' + new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+}
+
+const flatKeys = () => {
+  const ys = Object.keys(state.years).sort(); const set = new Set();
+  ys.forEach(y => Object.keys(state.years[y].flats).forEach(f => set.add(f)));
+  return [...set].sort((a, b) => (parseInt(a) || 9999) - (parseInt(b) || 9999) || a.localeCompare(b));
+};
+const latestYear = () => Math.max(...Object.keys(state.years).map(Number));
+
+/* ---------- Home ---------- */
+function home() {
+  const ly = state.years[latestYear()];
+  const list = flatKeys().map(f => ({ f, due: ly.flats[f] ? ly.flats[f].due : 0 }));
+  const pending = list.filter(x => x.due > 0).sort((a, b) => b.due - a.due);
+  const total = pending.reduce((s, x) => s + x.due, 0);
+  const cleared = list.length - pending.length;
+  app.innerHTML = `
+    <div class="card"><div class="mute">Total pending, ${pending.length} flats</div><div class="total">${inr(total)}</div></div>
+    <div class="card"><label for="pick" class="mute">View your flat's month-wise report</label>
+      <select id="pick"><option value="">Select flat number</option>${flatKeys().map(f => `<option>${esc(f)}</option>`).join('')}</select></div>
+    <div class="card"><b>Flats with pending maintenance</b>
+      <div class="grid" style="margin-top:10px">${pending.map(x => `<button class="chip" data-f="${esc(x.f)}"><b>${/^\d+$/.test(x.f) ? 'Flat ' : ''}${esc(x.f)}</b><span>${inr(x.due)}</span></button>`).join('')}</div>
+      <p class="mute">${cleared} flats are fully paid or in advance.</p></div>`;
+  $('pick').onchange = e => e.target.value && (location.hash = 'flat=' + encodeURIComponent(e.target.value));
+  app.querySelectorAll('.chip').forEach(b => b.onclick = () => location.hash = 'flat=' + encodeURIComponent(b.dataset.f));
+}
+
+/* ---------- PIN gate + flat report ---------- */
+function gate(flat) {
+  const key = 'rr_ok_' + flat, stored = state.access[flat];
+  if (sessionStorage.getItem(key) === stored && stored) return report(flat);
+  app.innerHTML = `<p><a href="#">← All flats</a></p><div class="card"><b>Flat ${esc(flat)}</b>
+    <p class="mute">Enter the PIN the committee gave you.</p>
+    <div class="row"><input id="pin" type="password" inputmode="numeric" autocomplete="off" aria-label="PIN"><button id="go">Open</button></div>
+    <p id="msg" class="err"></p></div>`;
+  if (REQUIRE_PIN && !stored) { $('msg').textContent = 'No PIN is set for this flat yet. Please ask the committee.'; return; }
+  const submit = async () => {
+    if ((await hashPin(flat, $('pin').value.trim())) === stored) { sessionStorage.setItem(key, stored); report(flat); }
+    else $('msg').textContent = 'That PIN is not correct.';
+  };
+  $('go').onclick = submit; $('pin').onkeydown = e => e.key === 'Enter' && submit();
+  $('pin').focus();
+}
+
+function report(flat, year) {
+  const ys = Object.keys(state.years).map(Number).filter(y => state.years[y].flats[flat]).sort();
+  if (!ys.length) { app.innerHTML = '<p><a href="#">← All flats</a></p><div class="card">No records for this flat.</div>'; return; }
+  year = ys.includes(year) ? year : ys[ys.length - 1];
+  const f = state.years[year].flats[flat], latest = state.years[latestYear()].flats[flat];
+  const due = latest ? latest.due : f.due;
+  const rows = f.months.filter(x => x.billed || x.rec || x.tank || x.comment);
+  const tR = rows.reduce((s, x) => s + x.rec + x.tank, 0), tB = rows.reduce((s, x) => s + x.billed, 0);
+  app.innerHTML = `<p><a href="#">← All flats</a></p>
+    <div class="card"><div class="mute">Flat ${esc(flat)}${f.name ? ' · ' + esc(f.name) : ''}</div>
+      <div class="mute">Pending now</div>
+      <div class="total ${due > 0 ? '' : 'ok'}">${due > 0 ? inr(due) : due < 0 ? inr(due) + ' advance' : 'Nil'}</div></div>
+    <div class="tabs" role="group" aria-label="Year">${ys.map(y => `<button aria-pressed="${y === year}" data-y="${y}">${y}</button>`).join('')}</div>
+    <div class="card scroll">${rows.length ? `<table><thead><tr><th>Month</th><th>Old due</th><th>Billed</th><th>Paid</th><th>Pending</th><th>Note</th></tr></thead><tbody>
+      ${rows.map(x => `<tr><td>${MONFULL[x.m].slice(0, 3)} ${year}</td><td>${inr(x.old)}${x.old < 0 ? ' Cr' : ''}</td><td>${inr(x.billed)}</td>
+        <td>${inr(x.rec + x.tank)}</td><td class="${x.bal > 0 ? 'due' : 'ok'}">${x.bal < 0 ? inr(x.bal) + ' Cr' : inr(x.bal)}${x.mismatch !== undefined ? ` <span class="flag" title="Previous month closed at ${inr(x.mismatch)}, but this month opens differently.">⚠</span>` : ''}</td>
+        <td class="c">${x.tank ? 'Incl. special tank levy. ' : ''}${esc(x.comment)}</td></tr>`).join('')}
+      <tr><th>Year</th><th></th><th>${inr(tB)}</th><th>${inr(tR)}</th><th></th><th></th></tr></tbody></table>`
+      : '<p class="mute">No bills or payments recorded for this year yet.</p>'}</div>
+    <p class="mute">Cr = credit (paid in advance). ⚠ means the opening balance does not match the previous month's closing balance; ask the committee to check.</p>`;
+  app.querySelectorAll('.tabs button').forEach(b => b.onclick = () => report(flat, +b.dataset.y));
+}
+
+/* ---------- Committee tool: #admin generates a PIN hash row for the "Access" tab ---------- */
+function admin() {
+  app.innerHTML = `<p><a href="#">← Back</a></p><div class="card"><b>Committee: create PIN entry</b>
+    <p class="mute">Paste the result into the "Access" tab: flat in column A, hash in column B. Use 6+ digit PINs.</p>
+    <div class="row"><input id="af" placeholder="Flat no." aria-label="Flat"><input id="ap" placeholder="PIN" aria-label="PIN"></div><p></p>
+    <button id="ag">Generate</button><p><code id="ao"></code></p></div>`;
+  $('ag').onclick = async () => { $('ao').textContent = $('af').value.trim() + '\t' + await hashPin($('af').value.trim(), $('ap').value.trim()); };
+}
+
+function route() {
+  if (location.hash === '#admin') return admin();
+  const m = location.hash.match(/^#flat=(.+)$/);
+  m ? gate(decodeURIComponent(m[1])) : home();
+}
+window.addEventListener('hashchange', route);
+load().then(route).catch(e => { app.innerHTML = `<div class="card err">Could not load data. ${esc(e.message)}</div>`; });
+</script>
+</body>
+</html>
