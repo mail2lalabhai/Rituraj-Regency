@@ -50,7 +50,7 @@ code{background:var(--bg);padding:1px 5px;border-radius:4px;word-break:break-all
 /* ===== CONFIG – edit these two lines ===== */
 const SHEET_ID = '1HX1XBchu2cVcqgWlBM_5dat9_UAnPmwelTi_FroWO9s';
 const API_KEY  = 'AIzaSyDoz4N54mx1SU7m0TZHsbxlzF5YkgNhA9c';
-const REQUIRE_PIN = false;      // flats without a PIN row in the "Access" tab are blocked
+const REQUIRE_PIN = true;      // flats without a PIN row in the "Access" tab are blocked
 const MAX_COLS = 'CZ', MAX_ROWS = 200;
 /* ========================================= */
 
@@ -166,7 +166,7 @@ function gate(flat) {
     if ((await hashPin(flat, $('pin').value.trim())) === stored) { sessionStorage.setItem(key, stored); report(flat); }
     else $('msg').textContent = 'That PIN is not correct.';
   };
-  $('go').onclick = submit; $('pin').onkeydown = e => e.key === 'Enter' && submit();
+  $('go').onclick = submit; $('pin').onkeydown = e => { if (e.key === 'Enter') submit(); };
   $('sp').onchange = e => $('pin').type = e.target.checked ? 'text' : 'password';
   $('pin').focus();
 }
